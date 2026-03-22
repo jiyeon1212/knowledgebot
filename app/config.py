@@ -1,7 +1,9 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
     slack_bot_token: str
     slack_app_token: str
     google_client_id: str
@@ -11,9 +13,6 @@ class Settings(BaseSettings):
     database_url: str
     fernet_key: str
     app_base_url: str
-
-    class Config:
-        env_file = ".env"
 
 
 settings = Settings()
