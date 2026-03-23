@@ -9,7 +9,7 @@ SYSTEM_PROMPT = """당신은 사용자의 Gmail과 Google Drive 데이터를 검
 def _get_model() -> genai.GenerativeModel:
     # 임포트 시점이 아닌 첫 호출 시점에 configure — 테스트 환경에서 env var 없이 임포트 가능
     genai.configure(api_key=settings.gemini_api_key)
-    return genai.GenerativeModel("gemini-1.5-flash")
+    return genai.GenerativeModel("gemini-2.0-flash")
 
 
 async def summarize_results(question: str, gmail_results: list[dict], drive_results: list[dict]) -> str:
