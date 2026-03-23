@@ -29,7 +29,11 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 # Alembic은 동기 드라이버 필요 - asyncpg → psycopg2 스킴 변환
-url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+url = (
+    os.environ["DATABASE_URL"]
+    .replace("postgresql+asyncpg://", "postgresql://")
+    .replace("?ssl=require", "?sslmode=require")
+)
 config.set_main_option("sqlalchemy.url", url)
 
 
