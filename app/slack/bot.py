@@ -13,10 +13,13 @@ async def handle_oauth_button(ack):
 
 @slack_app.event("message")
 async def on_message(event, say):
+    print(f"[DEBUG] message event received: {event}", flush=True)
     # 봇 자신의 메시지는 무시 (무한루프 방지)
     if event.get("bot_id") or event.get("subtype"):
+        print(f"[DEBUG] skipping bot/subtype message", flush=True)
         return
     if event.get("channel_type") == "im":
+        print(f"[DEBUG] handling DM from {event.get('user')}: {event.get('text')}", flush=True)
         await handle_dm(
             user_id=event["user"],
             text=event.get("text", ""),
