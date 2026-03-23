@@ -12,7 +12,9 @@ async def search_gmail(access_token: str, query: str, max_results: int = 10) -> 
     service = build_gmail_service(access_token)
 
     def _fetch():
+        print(f"[DEBUG] Gmail API query: '{query}', token: {access_token[:20]}...", flush=True)
         resp = service.users().messages().list(userId="me", q=query, maxResults=max_results).execute()
+        print(f"[DEBUG] Gmail API raw response keys: {list(resp.keys())}, count: {len(resp.get('messages', []))}", flush=True)
         messages = resp.get("messages", [])
         results = []
         for msg in messages:

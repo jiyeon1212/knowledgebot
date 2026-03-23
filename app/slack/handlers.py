@@ -55,13 +55,20 @@ async def handle_dm(user_id: str, text: str, say) -> None:
 
             access_token = await get_valid_access_token(user=user, db=db)
 
-        gmail_results = await search_gmail(access_token=access_token, query=text)
+        # Gmail은 키워드 검색 — 자연어 질문이면 최근 메일 가져오기
+        gmail_query = text
+        if any(kw in text for kw in ["최근", "요약", "정리", "알려줘", "있어?", "있으면"]):
+            gmail_query = "newer_than:7d"
+        gmail_results = await search_gmail(access_token=access_token, query=gmail_query)
+        print(f"[DEBUG] gmail_query: '{gmail_query}', gmail_results({len(gmail_results)}): {gmail_results[:2]}", flush=True)
         drive_results = await search_drive(access_token=access_token, query=text)
+        print(f"[DEBUG] drive_results({len(drive_results)}): {drive_results}", flush=True)
         summary = await summarize_results(
             question=text,
             gmail_results=gmail_results,
             drive_results=drive_results,
         )
+        print(f"[DEBUG] summary: {repr(summary)}", flush=True)
         await say(summary)
 
     except Exception as e:
