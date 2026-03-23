@@ -1,4 +1,6 @@
 import logging
+import traceback
+import sys
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from app.database import AsyncSessionLocal
@@ -63,5 +65,6 @@ async def handle_dm(user_id: str, text: str, say) -> None:
         await say(summary)
 
     except Exception as e:
-        logging.getLogger(__name__).exception("handle_dm failed for user %s", user_id)
+        traceback.print_exc(file=sys.stderr)
+        print(f"[ERROR] handle_dm failed for user {user_id}: {type(e).__name__}: {e}", flush=True)
         await say(f"오류 발생: {type(e).__name__}: {e}")
