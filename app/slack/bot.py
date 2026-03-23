@@ -6,6 +6,11 @@ from app.slack.handlers import handle_dm
 slack_app = AsyncApp(token=settings.slack_bot_token)
 
 
+@slack_app.action("google_oauth_login")
+async def handle_oauth_button(ack):
+    await ack()
+
+
 @slack_app.event("message")
 async def on_message(event, say):
     # 봇 자신의 메시지는 무시 (무한루프 방지)
