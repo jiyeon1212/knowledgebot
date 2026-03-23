@@ -62,6 +62,6 @@ async def handle_dm(user_id: str, text: str, say) -> None:
         )
         await say(summary)
 
-    except Exception:
+    except Exception as e:
         logging.getLogger(__name__).exception("handle_dm failed for user %s", user_id)
-        await say("죄송합니다, 답변을 처리하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
+        await say(f"오류 발생: {type(e).__name__}: {e}")
