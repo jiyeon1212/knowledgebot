@@ -15,6 +15,25 @@ def _get_client() -> genai.Client:
     return _client
 
 
+async def extract_search_query(user_text: str) -> str:
+    """자연어 질문에서 Gmail/Drive 검색에 적합한 키워드를 추출한다."""
+    client = _get_client()
+    prompt = (
+        "사용자가 Gmail과 Google Drive에서 정보를 찾으려고 합니다.\n"
+        "아래 자연어 질문에서 검색에 사용할 핵심 키워드만 추출하세요.\n"
+        "Gmail 검색 문법(newer_than:7d, from:, subject: 등)을 활용해도 됩니다.\n"
+        "검색 키워드만 한 줄로 출력하세요. 설명 없이.\n\n"
+        f"질문: {user_text}\n"
+        "검색 키워드:"
+    )
+    response = await client.aio.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+    )
+    keyword = response.text.strip().strip('"').strip("'")
+    return keyword
+
+
 async def summarize_results(question: str, gmail_results: list[dict], drive_results: list[dict]) -> str:
     client = _get_client()
 

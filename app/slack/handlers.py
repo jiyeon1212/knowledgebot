@@ -55,13 +55,14 @@ async def handle_dm(user_id: str, text: str, say) -> None:
 
             access_token = await get_valid_access_token(user=user, db=db)
 
-        # Gmail은 키워드 검색 — 자연어 질문이면 최근 메일 가져오기
-        gmail_query = text
-        if any(kw in text for kw in ["최근", "요약", "정리", "알려줘", "있어?", "있으면"]):
-            gmail_query = "newer_than:7d"
-        gmail_results = await search_gmail(access_token=access_token, query=gmail_query)
-        print(f"[DEBUG] gmail_query: '{gmail_query}', gmail_results({len(gmail_results)}): {gmail_results[:2]}", flush=True)
-        drive_results = await search_drive(access_token=access_token, query=text)
+        # Gemini로 자연어 → Gmail/Drive 검색 키워드 추출
+        from app.ai.summarizer import extract_search_query
+        search_keyword = await extract_search_query(text)
+        print(f"[DEBUG] extracted search keyword: '{search_keyword}' from '{text}'", flush=True)
+
+        gmail_results = await search_gmail(access_token=access_token, query=search_keyword)
+        print(f"[DEBUG] gmail_results({len(gmail_results)}): {gmail_results[:2]}", flush=True)
+        drive_results = await search_drive(access_token=access_token, query=search_keyword)
         print(f"[DEBUG] drive_results({len(drive_results)}): {drive_results}", flush=True)
         summary = await summarize_results(
             question=text,
