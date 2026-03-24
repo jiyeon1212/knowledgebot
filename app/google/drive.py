@@ -30,7 +30,7 @@ async def search_drive(access_token: str, query: str, max_results: int = 10) -> 
                 "name": f["name"],
                 "mime_type": f.get("mimeType", ""),
                 "modified": f.get("modifiedTime", ""),
-                "link": f.get("webViewLink", ""),
+                "link": f.get("webViewLink") or f"https://drive.google.com/file/d/{f['id']}/view",
             }
             for f in resp.get("files", [])
         ]
