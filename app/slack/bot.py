@@ -10,6 +10,11 @@ slack_app = AsyncApp(token=settings.slack_bot_token)
 async def handle_oauth_button(ack):
     await ack()
 
+@slack_app.action("atlassian_oauth_login")
+async def handle_atlassian_oauth_button(ack):
+    await ack()
+
+
 
 @slack_app.event("message")
 async def on_message(event, say):

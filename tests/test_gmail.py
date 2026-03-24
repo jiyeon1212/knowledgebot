@@ -18,6 +18,9 @@ async def test_search_gmail_returns_snippets():
 
     assert len(results) > 0
     assert "snippet" in results[0]
+    assert "content_summary" in results[0]
+    assert "link" in results[0]
+    assert results[0]["link"] == "https://mail.google.com/mail/u/0/#inbox/msg1"
 
 
 async def test_search_gmail_empty_result():

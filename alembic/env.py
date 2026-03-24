@@ -19,6 +19,7 @@ from alembic import context
 # model imports to register metadata
 from app.models.user import User  # noqa: F401
 from app.models.oauth_state import OAuthState  # noqa: F401
+from app.models.atlassian_user import AtlassianUser  # noqa: F401
 from app.database import Base
 
 config = context.config

@@ -109,6 +109,10 @@ Slack DM으로 질문하면 Gmail과 Google Drive를 검색해 Gemini가 요약 
 1. 좌측 메뉴 **App Home** 클릭
 2. **App Display Name** 섹션에서 **Edit** 클릭
 3. Display Name (예: `KnowledgeBot`)과 Default Username (예: `knowledgebot`) 입력 → **Save**
+4. **Show Tabs** 섹션에서 **Messages Tab** 을 켜기 (Enable)
+5. 그 아래 **Allow users to send Slash commands and messages from the messages tab** 체크박스 체크
+
+> ⚠️ Messages Tab을 켜지 않으면 "이 앱으로 메시지를 보내는 기능이 꺼져 있습니다" 에러가 발생합니다.
 
 ### 3. Socket Mode 활성화
 

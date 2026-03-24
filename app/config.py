@@ -14,5 +14,10 @@ class Settings(BaseSettings):
     fernet_key: str
     app_base_url: str
 
+    # Atlassian OAuth (빈 문자열이면 Atlassian 기능 비활성화)
+    atlassian_client_id: str = ""
+    atlassian_client_secret: str = ""
+    atlassian_redirect_uri: str = ""
+
 
 settings = Settings()

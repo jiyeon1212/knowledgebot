@@ -22,6 +22,7 @@ async def search_drive(access_token: str, query: str, max_results: int = 10) -> 
         resp = service.files().list(
             q=drive_query,
             pageSize=max_results,
+            orderBy="modifiedTime desc",
             fields="files(id, name, mimeType, modifiedTime, webViewLink)",
         ).execute()
         return [
