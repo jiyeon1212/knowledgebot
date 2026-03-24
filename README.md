@@ -92,6 +92,66 @@ Slack DM으로 질문하면 Gmail과 Google Drive를 검색해 Gemini가 요약 
 
 ---
 
+## Slack App 생성 가이드
+
+서버를 실행하기 전에 Slack App을 먼저 만들어야 합니다. 서버 실행만으로 슬랙봇이 자동 생성되지 않습니다.
+
+### 1. 앱 생성
+
+1. [api.slack.com/apps](https://api.slack.com/apps) 접속 (회사 Slack 계정으로 로그인)
+2. **Create New App** → **From scratch** 선택
+3. App Name 입력 (예: `KnowledgeBot`), 워크스페이스 선택 → **Create App**
+
+### 2. App Home 설정 (Bot User 생성)
+
+> ⚠️ 이 단계를 건너뛰면 "봇으로 구성되어 있지 않습니다" 에러가 발생합니다.
+
+1. 좌측 메뉴 **App Home** 클릭
+2. **App Display Name** 섹션에서 **Edit** 클릭
+3. Display Name (예: `KnowledgeBot`)과 Default Username (예: `knowledgebot`) 입력 → **Save**
+
+### 3. Socket Mode 활성화
+
+이 프로젝트는 Socket Mode를 사용합니다. Socket Mode는 서버가 Slack에 WebSocket으로 연결하는 방식이라, 공개 URL 없이 로컬에서도 봇을 실행할 수 있습니다.
+
+1. 좌측 메뉴 **Socket Mode** → **Enable Socket Mode** 켜기
+2. Token Name 입력 (아무거나, 예: `knowledgebot-local`) → **Generate**
+3. 생성된 `xapp-` 토큰 복사 → `.env`의 `SLACK_APP_TOKEN`에 저장
+
+### 4. Bot Token Scopes 설정
+
+1. 좌측 메뉴 **OAuth & Permissions** 이동
+2. **Bot Token Scopes** 섹션에서 아래 4개 추가:
+   - `chat:write` — 메시지 전송
+   - `im:history` — DM 내역 읽기
+   - `im:read` — DM 채널 접근
+   - `im:write` — DM 채널 열기
+
+### 5. Event Subscriptions 설정
+
+Event Subscriptions는 봇이 어떤 이벤트를 수신할지 구독하는 설정입니다. 구독하지 않으면 DM을 보내도 서버에 이벤트가 전달되지 않습니다.
+
+1. 좌측 메뉴 **Event Subscriptions** → **Enable Events** 켜기
+2. **Subscribe to bot events** 섹션에서 `message.im` 추가
+3. **Save Changes** 클릭
+
+### 6. 워크스페이스에 설치
+
+1. 좌측 메뉴 **Install App** → **Install to Workspace** 클릭
+2. 권한 허용
+3. 생성된 `xoxb-` Bot Token 복사 → `.env`의 `SLACK_BOT_TOKEN`에 저장
+
+> **참고**: 회사 워크스페이스에서 관리자 승인이 필요한 경우 "Install to Workspace" 대신 "Request to Workspace Install" 버튼이 표시됩니다. 이 경우 워크스페이스 관리자가 `https://워크스페이스이름.slack.com/admin/apps`에서 승인해야 합니다.
+
+### 토큰 확인 위치
+
+| 토큰 | 위치 |
+| --- | --- |
+| Bot Token (`xoxb-`) | **OAuth & Permissions** → Bot User OAuth Token |
+| App Token (`xapp-`) | **Basic Information** → App-Level Tokens |
+
+---
+
 ## 실행 방법
 
 ### 1. 사전 준비
