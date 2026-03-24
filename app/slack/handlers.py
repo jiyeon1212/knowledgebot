@@ -10,7 +10,7 @@ from app.auth.google_oauth import build_auth_url
 from app.google.gmail import search_gmail
 from app.google.drive import search_drive
 from app.google.token_refresh import get_valid_access_token
-from app.ai.summarizer import summarize_results
+from app.ai.summarizer import summarize_results, extract_search_query
 
 _STATE_TTL_MINUTES = 10
 
@@ -56,7 +56,6 @@ async def handle_dm(user_id: str, text: str, say) -> None:
             access_token = await get_valid_access_token(user=user, db=db)
 
         # Gemini로 자연어 → Gmail/Drive 검색 키워드 추출
-        from app.ai.summarizer import extract_search_query
         search_keyword = await extract_search_query(text)
         print(f"[DEBUG] extracted search keyword: '{search_keyword}' from '{text}'", flush=True)
 
@@ -64,6 +63,13 @@ async def handle_dm(user_id: str, text: str, say) -> None:
         print(f"[DEBUG] gmail_results({len(gmail_results)}): {gmail_results[:2]}", flush=True)
         drive_results = await search_drive(access_token=access_token, query=search_keyword)
         print(f"[DEBUG] drive_results({len(drive_results)}): {drive_results}", flush=True)
+
+        # 모든 검색 결과가 0건이면 Gemini API 호출 안 함
+        if not gmail_results and not drive_results:
+            print(f"[DEBUG] all search results empty, skipping Gemini API", flush=True)
+            await say("관련 정보를 찾지 못했습니다.")
+            return
+
         summary = await summarize_results(
             question=text,
             gmail_results=gmail_results,

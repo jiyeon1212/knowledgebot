@@ -33,7 +33,8 @@ async def test_existing_user_gets_summary():
     with (
         patch("app.slack.handlers.AsyncSessionLocal") as mock_session_cls,
         patch("app.slack.handlers.get_valid_access_token", AsyncMock(return_value="real_token")),
-        patch("app.slack.handlers.search_gmail", AsyncMock(return_value=[])),
+        patch("app.slack.handlers.extract_search_query", AsyncMock(return_value="회의")),
+        patch("app.slack.handlers.search_gmail", AsyncMock(return_value=[{"subject": "회의", "from": "a@b.c", "snippet": "내용"}])),
         patch("app.slack.handlers.search_drive", AsyncMock(return_value=[])),
         patch("app.slack.handlers.summarize_results", AsyncMock(return_value="답변입니다.")),
     ):
