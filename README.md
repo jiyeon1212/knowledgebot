@@ -26,28 +26,51 @@ Slack DM으로 질문하면 Gmail과 Google Drive를 검색해 Gemini가 요약 
 ## 동작 방식
 
 ```
-사용자 → Slack DM
-           │
-           ▼
-     Google 연동 여부 확인
-           │
-    미연동 ─┤─ 연동됨
-           │           │
-    OAuth 버튼 발송     ▼
-                 Gemini로 검색 키워드 추출
-                       │
-                       ▼
-              Gmail + Drive 병렬 검색
-                       │
-                       ▼
-              Gemini 2.5 Flash로 요약
-                       │
-                       ▼
-                Slack DM으로 답변 전송
+┌─────────────────────────────────────────────────────────────┐
+│                        Slack                                │
+│                                                             │
+│   사용자 ──DM 전송──▶ 봇                                    │
+│                        │                                   │
+└────────────────────────│────────────────────────────────────┘
+                         │
+                         ▼
+              ┌─────────────────────┐
+              │  DB 유저 조회        │
+              │  (slack_user_id)    │
+              └──────────┬──────────┘
+                         │
+             ┌───────────┴───────────┐
+             │                       │
+          미연동                   연동됨
+             │                       │
+             ▼                       ▼
+  ┌──────────────────┐    ┌──────────────────────┐
+  │ OAuth 버튼 발송   │    │ Gemini: 키워드 추출   │
+  │                  │    │ "건강검진 메일 요약"   │
+  │  [Google 로그인] │    │  → "건강검진"         │
+  └──────────────────┘    └──────────┬───────────┘
+           │                         │
+           │ 클릭                     ▼
+           ▼              ┌──────────────────────┐
+  ┌────────────────┐      │  Gmail API 검색       │
+  │ Google OAuth   │      │  Drive API 검색       │
+  │ /auth/google/  │      │  (최대 각 10건)        │
+  │ callback       │      └──────────┬───────────┘
+  │                │                 │
+  │ 토큰 암호화 후 │                 ▼
+  │ DB 저장        │      ┌──────────────────────┐
+  └────────────────┘      │ Gemini 2.5 Flash     │
+                          │ 검색 결과 요약        │
+                          └──────────┬───────────┘
+                                     │
+                                     ▼
+                          ┌──────────────────────┐
+                          │  Slack DM으로 답변    │
+                          └──────────────────────┘
 ```
 
 1. 봇이 DM을 수신하면 DB에서 해당 Slack 유저를 조회합니다.
-2. 미연동 유저에게는 Google OAuth 버튼을 보냅니다. 버튼 클릭 시 `/auth/google/callback`으로 리다이렉트돼 토큰을 DB에 저장합니다.
+2. 미연동 유저에게는 Google OAuth 버튼을 보냅니다. 버튼 클릭 시 `/auth/google/callback`으로 리다이렉트돼 토큰을 암호화(Fernet)하여 DB에 저장합니다.
 3. 연동된 유저의 질문은 Gemini가 핵심 키워드로 변환한 뒤 Gmail API와 Drive API로 검색합니다.
 4. 검색 결과를 Gemini에 전달해 한국어 요약을 생성하고 DM으로 응답합니다.
 
@@ -55,17 +78,17 @@ Slack DM으로 질문하면 Gmail과 Google Drive를 검색해 Gemini가 요약 
 
 ## 기술 스택
 
-| 분류 | 라이브러리 / 서비스 |
-|------|---------------------|
-| 웹 프레임워크 | FastAPI 0.115, Uvicorn 0.30 |
-| Slack | slack-bolt 1.21 (Socket Mode) |
-| Google API | google-api-python-client, google-auth-oauthlib |
-| AI | google-genai (Gemini 2.5 Flash) |
-| DB | PostgreSQL + SQLAlchemy 2.0 (asyncpg) |
-| 마이그레이션 | Alembic 1.14 |
-| 암호화 | cryptography (Fernet) |
-| 설정 | pydantic-settings |
-| 배포 | Railway |
+| 분류          | 라이브러리 / 서비스                            |
+| ------------- | ---------------------------------------------- |
+| 웹 프레임워크 | FastAPI 0.115, Uvicorn 0.30                    |
+| Slack         | slack-bolt 1.21 (Socket Mode)                  |
+| Google API    | google-api-python-client, google-auth-oauthlib |
+| AI            | google-genai (Gemini 2.5 Flash)                |
+| DB            | PostgreSQL + SQLAlchemy 2.0 (asyncpg)          |
+| 마이그레이션  | Alembic 1.14                                   |
+| 암호화        | cryptography (Fernet)                          |
+| 설정          | pydantic-settings                              |
+| 배포          | Railway                                        |
 
 ---
 
@@ -80,9 +103,9 @@ Slack DM으로 질문하면 Gmail과 Google Drive를 검색해 Gemini가 요약 
 - **Gemini API Key**: Google AI Studio에서 발급
 - **PostgreSQL**: 접속 가능한 DB (Neon, Supabase 등 가능)
 - **Fernet Key** 생성:
-  ```bash
-  python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-  ```
+   ```bash
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
 
 ### 2. 설치
 
@@ -159,9 +182,11 @@ Slack에서 봇에게 DM으로 아래와 같이 질문합니다.
 ```
 건강검진 관련 메일이 있으면 요약해줘
 ```
+
 ```
 지난주에 받은 계약서 파일 찾아줘
 ```
+
 ```
 김팀장한테 받은 메일 내용 정리해줘
 ```
@@ -180,12 +205,3 @@ restartPolicyType = "on_failure"
 
 Railway 대시보드에서 위 환경변수를 설정하고 배포하면 됩니다.
 `GOOGLE_REDIRECT_URI`와 `APP_BASE_URL`은 Railway 도메인으로 변경해야 합니다.
-
----
-
-## 향후 계획
-
-- [ ] Gmail 검색 범위 확장 (현재 최대 10건)
-- [ ] Drive 파일 내용 본문 읽기 (현재 파일명/링크만 반환)
-- [ ] 멀티턴 대화 지원 (현재 단일 질문-응답)
-- [ ] 슬래시 커맨드(`/search`) 지원
