@@ -14,12 +14,19 @@ from app.models.oauth_state import OAuthState
 from app.auth.google_oauth import build_auth_url
 from app.auth.atlassian_oauth import build_atlassian_auth_url
 from app.google.gmail import search_gmail
-from app.google.drive import search_drive
+from app.google.drive import search_drive, search_drive_by_project
 from app.google.token_refresh import get_valid_access_token
 from app.atlassian.token_refresh import get_valid_atlassian_token, AtlassianReauthRequired
-from app.atlassian.confluence import search_confluence
-from app.atlassian.jira import search_jira
-from app.ai.summarizer import classify_intent, generate_chat_response, summarize_results, filter_irrelevant_results
+from app.atlassian.confluence import search_confluence, search_confluence_by_project
+from app.atlassian.jira import search_jira, search_jira_by_project
+from app.ai.summarizer import (
+    classify_intent, generate_chat_response, summarize_results,
+    filter_irrelevant_results, filter_by_category,
+)
+from app.search.query_builder import (
+    build_gmail_query, CATEGORY_KEYWORDS,
+    is_project_search, parse_search_command,
+)
 from app.slack.block_kit import format_search_response
 
 logger = logging.getLogger(__name__)
@@ -61,7 +68,40 @@ def _distribute_results(
 
 async def handle_dm(user_id: str, text: str, say) -> None:
     try:
-        # 0. [키워드] 직접 지정 감지 — AI 의도 분류 건너뜀
+        # 0-1. #검색 포맷 감지 → 프로젝트 기반 검색
+        if is_project_search(text):
+            parsed = parse_search_command(text)
+            if parsed is None:
+                await say(
+                    "입력 형식을 확인해주세요.\n"
+                    "예: `#검색 상호운용 /개발`\n"
+                    "예: `#검색 미래에셋, 신한 /사업 /최근 3개월`"
+                )
+                return
+
+            # 기간 자연어 → AI 파싱
+            date_from = None
+            date_to = None
+            if parsed["period_text"]:
+                period_result = await classify_intent(parsed["period_text"])
+                date_from = period_result.get("date_from")
+                date_to = period_result.get("date_to")
+
+            project_label = ", ".join(parsed["project_names"])
+            category_label = "사업" if parsed["category"] == "business" else "개발"
+            await say(f"🔍 *{project_label}* ({category_label}) 검색을 시작합니다...")
+
+            await handle_project_search(
+                user_id=user_id,
+                project_names=parsed["project_names"],
+                category=parsed["category"],
+                date_from=date_from,
+                date_to=date_to,
+                say=say,
+            )
+            return
+
+        # 0-2. [키워드] 직접 지정 감지 — AI 의도 분류 건너뜀
         bracket_matches = re.findall(r"\[([^\]]+)\]", text)
         if bracket_matches:
             keyword = " ".join(bracket_matches)
@@ -202,6 +242,16 @@ async def handle_dm(user_id: str, text: str, say) -> None:
 
         print(f"[DEBUG] 검색 결과: Gmail={len(gmail_results)}건, Drive={len(drive_results)}건, Confluence={len(confluence_results)}건, Jira={len(jira_results)}건 (keyword={keyword})")
 
+        # 필터링 전 문서 제목 로그
+        for i, m in enumerate(gmail_results):
+            print(f"[DEBUG] [필터전] Gmail[{i}]: {m.get('subject', '')}")
+        for i, f in enumerate(drive_results):
+            print(f"[DEBUG] [필터전] Drive[{i}]: {f.get('name', '')}")
+        for i, c in enumerate(confluence_results):
+            print(f"[DEBUG] [필터전] Confluence[{i}]: {c.get('title', '')}")
+        for i, j in enumerate(jira_results):
+            print(f"[DEBUG] [필터전] Jira[{i}]: [{j.get('key', '')}] {j.get('title', '')}")
+
         # AI 관련성 필터링 (방법 1: 관련 없는 결과 제거)
         # 필터링은 사용자 원문 텍스트 기준으로 수행 (AI 추출 키워드가 불완전할 수 있으므로)
         gmail_results, drive_results, confluence_results, jira_results = await asyncio.gather(
@@ -303,3 +353,223 @@ async def handle_dm(user_id: str, text: str, say) -> None:
             msg = f"⚠️ 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.\n(오류 코드: {type(e).__name__})"
 
         await say(msg)
+
+
+# ---------------------------------------------------------------------------
+# 프로젝트 기반 구조화 검색 핸들러
+# ---------------------------------------------------------------------------
+
+async def handle_project_search(
+    user_id: str,
+    project_names: list[str],
+    category: str,
+    date_from: str | None,
+    date_to: str | None,
+    say,
+) -> None:
+    """폼 기반 프로젝트 검색을 처리한다.
+
+    흐름:
+    1. 쿼리 변환 레이어로 플랫폼별 파라미터 생성
+    2. 병렬로 Gmail/Drive/Confluence/Jira 검색
+    3. AI 카테고리 필터링
+    4. AI 요약 생성
+    5. Slack 응답
+    """
+    try:
+        category_info = CATEGORY_KEYWORDS.get(category, {})
+        category_description = category_info.get("filter_description", "")
+
+        async with AsyncSessionLocal() as db:
+            # 사용자 계정 조회
+            google_result = await db.execute(
+                select(User).where(User.slack_user_id == user_id)
+            )
+            google_user = google_result.scalar_one_or_none()
+
+            atlassian_result = await db.execute(
+                select(AtlassianUser).where(AtlassianUser.slack_user_id == user_id)
+            )
+            atlassian_user = atlassian_result.scalar_one_or_none()
+
+            if not google_user and not atlassian_user:
+                await say("서비스 연결이 필요합니다. 먼저 계정을 연결해 주세요.")
+                return
+
+            # 연결된 서비스별 검색 태스크 빌드
+            google_connected = False
+            atlassian_connected = False
+            tasks = []
+
+            if google_user:
+                try:
+                    access_token = await get_valid_access_token(user=google_user, db=db)
+                    google_connected = True
+
+                    # Gmail: 프로젝트명 + 카테고리 보조 키워드로 검색
+                    gmail_query = build_gmail_query(
+                        project_names, category, date_from, date_to,
+                    )
+                    tasks.append(search_gmail(
+                        access_token=access_token,
+                        query=gmail_query,
+                        max_results=50,
+                    ))
+
+                    # Drive: 프로젝트명으로 폴더 찾기 → 내부 파일 조회
+                    tasks.append(search_drive_by_project(
+                        access_token=access_token,
+                        project_names=project_names,
+                        max_results=50,
+                        date_from=date_from,
+                        date_to=date_to,
+                    ))
+                except Exception:
+                    logger.exception("Google 토큰 획득 실패 (user_id=%s)", user_id)
+
+            if atlassian_user:
+                try:
+                    atl_token, cloud_id = await get_valid_atlassian_token(
+                        user=atlassian_user, db=db,
+                    )
+                    atlassian_connected = True
+
+                    # Confluence: 프로젝트명 상위 페이지 → 하위 전체 조회
+                    tasks.append(search_confluence_by_project(
+                        atl_token, cloud_id, project_names,
+                        max_results=50,
+                        date_from=date_from,
+                        date_to=date_to,
+                    ))
+
+                    # Jira: 프로젝트명으로 이슈 검색
+                    tasks.append(search_jira_by_project(
+                        atl_token, cloud_id, project_names,
+                        max_results=50,
+                        date_from=date_from,
+                        date_to=date_to,
+                    ))
+                except AtlassianReauthRequired:
+                    logger.warning("Atlassian 재인증 필요 (user_id=%s)", user_id)
+                except Exception:
+                    logger.exception("Atlassian 토큰 획득 실패 (user_id=%s)", user_id)
+
+            if not tasks:
+                await say("서비스 연결에 문제가 발생했습니다. 다시 인증해 주세요.")
+                return
+
+        # 병렬 검색 실행
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 예외 처리
+        processed = []
+        for r in results:
+            if isinstance(r, Exception):
+                logger.error("프로젝트 검색 실패: %s", r)
+                processed.append([])
+            else:
+                processed.append(r)
+
+        # 결과 분배
+        gmail_results, drive_results, confluence_results, jira_results = (
+            _distribute_results(processed, google_connected, atlassian_connected)
+        )
+
+        project_label = ", ".join(project_names)
+        print(
+            f"[DEBUG] 프로젝트 검색 결과: Gmail={len(gmail_results)}건, "
+            f"Drive={len(drive_results)}건, Confluence={len(confluence_results)}건, "
+            f"Jira={len(jira_results)}건 (projects={project_label})"
+        )
+
+        # 필터링 전 문서 제목 로그
+        for i, m in enumerate(gmail_results):
+            print(f"[DEBUG] [필터전] Gmail[{i}]: {m.get('subject', '')}")
+        for i, f in enumerate(drive_results):
+            print(f"[DEBUG] [필터전] Drive[{i}]: {f.get('name', '')}")
+        for i, c in enumerate(confluence_results):
+            print(f"[DEBUG] [필터전] Confluence[{i}]: {c.get('title', '')}")
+        for i, j in enumerate(jira_results):
+            print(f"[DEBUG] [필터전] Jira[{i}]: [{j.get('key', '')}] {j.get('title', '')}")
+
+        # AI 카테고리 필터링 (병렬)
+        gmail_results, drive_results, confluence_results, jira_results = (
+            await asyncio.gather(
+                filter_by_category(category, category_description, gmail_results, "gmail"),
+                filter_by_category(category, category_description, drive_results, "drive"),
+                filter_by_category(category, category_description, confluence_results, "confluence"),
+                filter_by_category(category, category_description, jira_results, "jira"),
+            )
+        )
+
+        print(
+            f"[DEBUG] 카테고리 필터링 후: Gmail={len(gmail_results)}건, "
+            f"Drive={len(drive_results)}건, Confluence={len(confluence_results)}건, "
+            f"Jira={len(jira_results)}건 (category={category})"
+        )
+
+        for i, m in enumerate(gmail_results):
+            print(f"[DEBUG] [필터후] Gmail[{i}]: {m.get('subject', '')}")
+        for i, f in enumerate(drive_results):
+            print(f"[DEBUG] [필터후] Drive[{i}]: {f.get('name', '')}")
+        for i, c in enumerate(confluence_results):
+            print(f"[DEBUG] [필터후] Confluence[{i}]: {c.get('title', '')}")
+        for i, j in enumerate(jira_results):
+            print(f"[DEBUG] [필터후] Jira[{i}]: [{j.get('key', '')}] {j.get('title', '')}")
+
+        total = (
+            len(gmail_results) + len(drive_results)
+            + len(confluence_results) + len(jira_results)
+        )
+        if total == 0:
+            await say(
+                f"'{project_label}' ({category}) 관련 검색 결과를 찾지 못했습니다. "
+                f"다른 프로젝트명이나 카테고리로 검색해 보세요."
+            )
+            return
+
+        # AI 요약 생성
+        question = f"{project_label} 프로젝트의 {category_description}"
+        summary = await summarize_results(
+            question=question,
+            gmail_results=gmail_results,
+            drive_results=drive_results,
+            confluence_results=confluence_results,
+            jira_results=jira_results,
+            user_id=user_id,
+        )
+
+        # Block Kit 포맷팅
+        blocks = format_search_response(
+            summary_text=summary,
+            gmail_results=gmail_results,
+            drive_results=drive_results,
+            confluence_results=confluence_results,
+            jira_results=jira_results,
+            connect_google=not google_connected,
+            connect_atlassian=not atlassian_connected,
+        )
+
+        # 날짜 필터 배너
+        if date_from or date_to:
+            date_banner = "📅 "
+            if date_from and date_to:
+                date_banner += f"{date_from} ~ {date_to} 기간으로 검색했습니다"
+            elif date_from:
+                date_banner += f"{date_from} 이후로 검색했습니다"
+            else:
+                date_banner += f"{date_to} 이전으로 검색했습니다"
+            blocks.insert(0, {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": date_banner}],
+            })
+
+        await say(blocks=blocks, text=summary)
+
+    except Exception as e:
+        traceback.print_exc(file=sys.stderr)
+        logger.error(
+            "handle_project_search failed for user %s: %s: %s",
+            user_id, type(e).__name__, e,
+        )
+        await say("⚠️ 프로젝트 검색 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.")

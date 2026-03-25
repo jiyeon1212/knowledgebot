@@ -205,3 +205,94 @@ def _parse_confluence_item(item: dict, data: dict, site_url: str | None) -> dict
         "modified": modified,
         "link": link,
     }
+
+
+# ---------------------------------------------------------------------------
+# 프로젝트 기반 검색 (상위 페이지 → 하위 페이지 전체 조회)
+# ---------------------------------------------------------------------------
+
+async def search_confluence_by_project(
+    access_token: str,
+    cloud_id: str,
+    project_names: list[str],
+    max_results: int = 50,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict]:
+    """프로젝트명으로 상위 페이지를 찾고 하위 페이지를 전부 조회한다.
+
+    1. title~"프로젝트명" 으로 상위 페이지 검색
+    2. ancestor={pageId} 로 모든 하위 페이지 조회
+    3. 콤마로 구분된 여러 프로젝트명은 각각 검색 후 합침
+    """
+    try:
+        url = _CONFLUENCE_SEARCH_URL.format(cloud_id=cloud_id)
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+        site_url = await _get_site_url(access_token, cloud_id)
+
+        # 날짜 필터 CQL 조건
+        date_cql = ""
+        if date_from:
+            date_cql += f' AND lastModified >= "{date_from}"'
+        if date_to:
+            date_cql += f' AND lastModified <= "{date_to}"'
+
+        seen_ids: set[str] = set()
+        results: list[dict] = []
+
+        async with httpx.AsyncClient() as client:
+            for project_name in project_names:
+                # 1단계: title에 프로젝트명이 포함된 페이지 찾기
+                title_resp = await client.get(
+                    url,
+                    params={
+                        "cql": f'type=page AND title~"{project_name}"',
+                        "limit": 10,
+                    },
+                    headers=headers,
+                )
+                title_resp.raise_for_status()
+                title_data = title_resp.json()
+
+                ancestor_ids: list[str] = []
+                for item in title_data.get("results", []):
+                    content = item.get("content", item)
+                    page_id = str(content.get("id", ""))
+                    if page_id:
+                        ancestor_ids.append(page_id)
+                        # 상위 페이지 자체도 결과에 포함
+                        parsed = _parse_confluence_item(item, title_data, site_url)
+                        if parsed and parsed["id"] not in seen_ids:
+                            seen_ids.add(parsed["id"])
+                            results.append(parsed)
+
+                # 2단계: 각 상위 페이지의 하위 페이지 전체 조회
+                for ancestor_id in ancestor_ids:
+                    child_resp = await client.get(
+                        url,
+                        params={
+                            "cql": f"type=page AND ancestor={ancestor_id}{date_cql}",
+                            "limit": max_results,
+                        },
+                        headers=headers,
+                    )
+                    child_resp.raise_for_status()
+                    child_data = child_resp.json()
+
+                    for item in child_data.get("results", []):
+                        parsed = _parse_confluence_item(item, child_data, site_url)
+                        if parsed and parsed["id"] not in seen_ids:
+                            seen_ids.add(parsed["id"])
+                            results.append(parsed)
+
+        return results[:max_results]
+
+    except Exception:
+        logger.exception(
+            "Confluence 프로젝트 검색 실패 (cloud_id=%s, projects=%s)",
+            cloud_id, project_names,
+        )
+        return []
