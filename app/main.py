@@ -34,3 +34,15 @@ app.include_router(auth_router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/debug/oauth")
+async def debug_oauth():
+    """임시 디버그 엔드포인트 — 배포 후 삭제할 것."""
+    from app.config import settings
+    return {
+        "google_redirect_uri": settings.google_redirect_uri,
+        "google_client_id": settings.google_client_id[:20] + "...",
+        "atlassian_redirect_uri": settings.atlassian_redirect_uri,
+        "app_base_url": settings.app_base_url,
+    }
