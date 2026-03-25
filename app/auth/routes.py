@@ -105,6 +105,10 @@ async def google_callback(code: str, state: str, db: AsyncSession = Depends(get_
     except Exception:
         logger.exception("Failed to send Slack DM after OAuth for user %s", slack_user_id)
 
+    # 검색 Modal 버튼 발송
+    from app.slack.modal import send_search_button
+    await send_search_button(slack_user_id)
+
     return HTMLResponse(content=_SUCCESS_HTML)
 
 _ATLASSIAN_SUCCESS_HTML = """<!DOCTYPE html>
@@ -204,6 +208,10 @@ async def atlassian_callback(code: str, state: str, db: AsyncSession = Depends(g
         )
     except Exception:
         logger.exception("Failed to send Slack DM after Atlassian OAuth for user %s", slack_user_id)
+
+    # 검색 Modal 버튼 발송
+    from app.slack.modal import send_search_button
+    await send_search_button(slack_user_id)
 
     return HTMLResponse(content=_ATLASSIAN_SUCCESS_HTML)
 

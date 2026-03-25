@@ -75,10 +75,19 @@ async def handle_dm(user_id: str, text: str, say) -> None:
             intent_result = await classify_intent(text)
             intent = intent_result["intent"]
 
-            # 2. chat 의도 → AI 직접 답변
+            # 2. chat 의도 → AI 답변 + 검색 안내
             if intent == "chat":
                 response = await generate_chat_response(text, user_id=user_id)
-                await say(response)
+                from app.slack.modal import SEARCH_BUTTON_BLOCKS
+                await say(
+                    blocks=[
+                        {"type": "section", "text": {"type": "mrkdwn", "text": response}},
+                        {"type": "divider"},
+                        SEARCH_BUTTON_BLOCKS[1],  # 안내 문구
+                        SEARCH_BUTTON_BLOCKS[2],  # 검색하기 버튼
+                    ],
+                    text=response,
+                )
                 return
 
             # 3. search 의도 → 검색 흐름
@@ -282,6 +291,13 @@ async def handle_dm(user_id: str, text: str, say) -> None:
                 "type": "context",
                 "elements": [{"type": "mrkdwn", "text": date_banner}],
             })
+
+        # 검색 안내 + 버튼 추가
+        from app.slack.modal import SEARCH_BUTTON_BLOCKS
+        blocks.append({"type": "divider"})
+        blocks.append(SEARCH_BUTTON_BLOCKS[1])  # 안내 문구
+        blocks.append(SEARCH_BUTTON_BLOCKS[2])  # 검색하기 버튼
+        blocks = blocks[:50]
 
         await say(blocks=blocks, text=summary)
 

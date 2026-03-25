@@ -4,8 +4,10 @@ from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from app.config import settings
 from app.slack.handlers import handle_dm
+from app.slack.modal import register_modal_handlers
 
 slack_app = AsyncApp(token=settings.slack_bot_token)
+register_modal_handlers(slack_app)
 
 
 @slack_app.action("google_oauth_login")
