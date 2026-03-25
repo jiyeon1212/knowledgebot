@@ -22,6 +22,9 @@ def build_auth_url() -> tuple[str, str]:
     state = secrets.token_urlsafe(32)
     flow = Flow.from_client_config(CLIENT_CONFIG, scopes=SCOPES, redirect_uri=settings.google_redirect_uri)
     url, _ = flow.authorization_url(access_type="offline", state=state, prompt="consent")
+    print(f"[DEBUG] Google OAuth URL: {url}")
+    print(f"[DEBUG] Google redirect_uri: {settings.google_redirect_uri}")
+    print(f"[DEBUG] Google client_id: {settings.google_client_id[:20]}...")
     return url, state
 
 
