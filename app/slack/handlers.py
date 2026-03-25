@@ -111,7 +111,31 @@ async def handle_dm(user_id: str, text: str, say) -> None:
             )
             return
 
-        # 0-2. [키워드] 직접 지정 감지 — AI 의도 분류 건너뜀
+        # 0-2. 미연동 사용자 → 로그인 버튼 (의도 분류 전에 체크)
+        async with AsyncSessionLocal() as db:
+            _g = await db.execute(select(User).where(User.slack_user_id == user_id))
+            _a = await db.execute(select(AtlassianUser).where(AtlassianUser.slack_user_id == user_id))
+            if not _g.scalar_one_or_none() and not _a.scalar_one_or_none():
+                google_auth_url, google_state = build_auth_url()
+                atlassian_auth_url, atlassian_state = build_atlassian_auth_url()
+                now = datetime.now(timezone.utc)
+                expires_at = now + timedelta(minutes=_STATE_TTL_MINUTES)
+                db.add(OAuthState(state=google_state, slack_user_id=user_id, expires_at=expires_at))
+                db.add(OAuthState(state=atlassian_state, slack_user_id=user_id, expires_at=expires_at))
+                await db.commit()
+                await say(
+                    blocks=[
+                        {"type": "section", "text": {"type": "mrkdwn", "text": "안녕하세요! 검색을 위해 계정을 연결해주세요."}},
+                        {"type": "actions", "elements": [
+                            {"type": "button", "text": {"type": "plain_text", "text": "Google 로그인"}, "url": google_auth_url, "action_id": "google_oauth_login"},
+                            {"type": "button", "text": {"type": "plain_text", "text": "Atlassian 로그인"}, "url": atlassian_auth_url, "action_id": "atlassian_oauth_login"},
+                        ]},
+                    ],
+                    text="계정 연결이 필요합니다.",
+                )
+                return
+
+        # 0-3. [키워드] 직접 지정 감지 — AI 의도 분류 건너뜀
         bracket_matches = re.findall(r"\[([^\]]+)\]", text)
         if bracket_matches:
             keyword = " ".join(bracket_matches)
@@ -160,57 +184,6 @@ async def handle_dm(user_id: str, text: str, say) -> None:
                 select(AtlassianUser).where(AtlassianUser.slack_user_id == user_id)
             )
             atlassian_user = atlassian_result.scalar_one_or_none()
-
-            # 두 계정 모두 미연결 → 로그인 버튼 모두 표시
-            if not google_user and not atlassian_user:
-                google_auth_url, google_state = build_auth_url()
-                atlassian_auth_url, atlassian_state = build_atlassian_auth_url()
-
-                # OAuth state 저장
-                now = datetime.now(timezone.utc)
-                expires_at = now + timedelta(minutes=_STATE_TTL_MINUTES)
-                db.add(OAuthState(
-                    state=google_state,
-                    slack_user_id=user_id,
-                    expires_at=expires_at,
-                ))
-                db.add(OAuthState(
-                    state=atlassian_state,
-                    slack_user_id=user_id,
-                    expires_at=expires_at,
-                ))
-                await db.commit()
-
-                await say(
-                    blocks=[
-                        {
-                            "type": "section",
-                            "text": {
-                                "type": "mrkdwn",
-                                "text": "안녕하세요! 검색을 위해 계정을 연결해주세요.",
-                            },
-                        },
-                        {
-                            "type": "actions",
-                            "elements": [
-                                {
-                                    "type": "button",
-                                    "text": {"type": "plain_text", "text": "Google 로그인"},
-                                    "url": google_auth_url,
-                                    "action_id": "google_oauth_login",
-                                },
-                                {
-                                    "type": "button",
-                                    "text": {"type": "plain_text", "text": "Atlassian 로그인"},
-                                    "url": atlassian_auth_url,
-                                    "action_id": "atlassian_oauth_login",
-                                },
-                            ],
-                        },
-                    ],
-                    text="계정 연결이 필요합니다.",
-                )
-                return
 
             # 연결된 서비스에 대해 토큰 획득 및 검색 태스크 빌드
             google_connected = False
