@@ -68,6 +68,16 @@ def _distribute_results(
 
 async def handle_dm(user_id: str, text: str, say) -> None:
     try:
+        # 0-0. 초기화 명령어 감지
+        if text.strip() in ("#초기화", "#리셋", "#reset"):
+            async with AsyncSessionLocal() as db:
+                from sqlalchemy import delete
+                await db.execute(delete(User).where(User.slack_user_id == user_id))
+                await db.execute(delete(AtlassianUser).where(AtlassianUser.slack_user_id == user_id))
+                await db.commit()
+            await say("🔄 계정 연결이 초기화됐습니다. 다시 메시지를 보내면 로그인 버튼이 나옵니다.")
+            return
+
         # 0-1. #검색 포맷 감지 → 프로젝트 기반 검색
         if is_project_search(text):
             parsed = parse_search_command(text)
