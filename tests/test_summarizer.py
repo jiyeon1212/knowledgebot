@@ -207,3 +207,96 @@ async def test_filter_irrelevant_results_zero_relevant_returns_empty():
         filtered = await filter_irrelevant_results("미래에셋", results, "gmail")
 
     assert len(filtered) == 0  # 관련 없으면 빈 리스트
+
+
+# ---------------------------------------------------------------------------
+# Claude 통합 테스트
+# ---------------------------------------------------------------------------
+from app.ai.summarizer import (
+    generate_chat_response,
+    _use_claude,
+)
+
+
+async def test_summarize_results_uses_claude_when_configured():
+    """ANTHROPIC_API_KEY가 설정되면 Claude를 사용한다."""
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="Claude 요약 결과")]
+    mock_claude = AsyncMock()
+    mock_claude.messages.create = AsyncMock(return_value=mock_msg)
+
+    with (
+        patch("app.ai.summarizer._use_claude", return_value=True),
+        patch("app.ai.summarizer._get_claude_client", return_value=mock_claude),
+    ):
+        result = await summarize_results(
+            question="테스트 질문",
+            gmail_results=[{"subject": "테스트", "from": "a@co.kr", "snippet": "내용"}],
+            drive_results=[],
+            user_id="U_TEST",
+        )
+
+    assert result == "Claude 요약 결과"
+    mock_claude.messages.create.assert_called_once()
+    call_kwargs = mock_claude.messages.create.call_args[1]
+    assert call_kwargs["model"] == "claude-sonnet-4-20250514"
+
+
+async def test_summarize_results_falls_back_to_gemini():
+    """ANTHROPIC_API_KEY가 없으면 Gemini fallback."""
+    mock_response = MagicMock()
+    mock_response.text = "Gemini 요약 결과"
+    mock_models = MagicMock()
+    mock_models.generate_content = AsyncMock(return_value=mock_response)
+    mock_aio = MagicMock()
+    mock_aio.models = mock_models
+    mock_client = MagicMock()
+    mock_client.aio = mock_aio
+
+    with (
+        patch("app.ai.summarizer._use_claude", return_value=False),
+        patch("app.ai.summarizer._get_client", return_value=mock_client),
+    ):
+        result = await summarize_results(
+            question="테스트 질문",
+            gmail_results=[],
+            drive_results=[],
+        )
+
+    assert result == "Gemini 요약 결과"
+
+
+async def test_generate_chat_response_uses_claude():
+    """Claude가 설정되면 chat 응답도 Claude를 사용한다."""
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="안녕하세요!")]
+    mock_claude = AsyncMock()
+    mock_claude.messages.create = AsyncMock(return_value=mock_msg)
+
+    with (
+        patch("app.ai.summarizer._use_claude", return_value=True),
+        patch("app.ai.summarizer._get_claude_client", return_value=mock_claude),
+    ):
+        result = await generate_chat_response("안녕", user_id="U_CHAT")
+
+    assert result == "안녕하세요!"
+
+
+async def test_generate_chat_response_gemini_fallback():
+    """Claude 미설정 시 Gemini로 chat 응답."""
+    mock_response = MagicMock()
+    mock_response.text = "Gemini 안녕!"
+    mock_models = MagicMock()
+    mock_models.generate_content = AsyncMock(return_value=mock_response)
+    mock_aio = MagicMock()
+    mock_aio.models = mock_models
+    mock_client = MagicMock()
+    mock_client.aio = mock_aio
+
+    with (
+        patch("app.ai.summarizer._use_claude", return_value=False),
+        patch("app.ai.summarizer._get_client", return_value=mock_client),
+    ):
+        result = await generate_chat_response("안녕")
+
+    assert result == "Gemini 안녕!"

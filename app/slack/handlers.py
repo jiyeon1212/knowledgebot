@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import traceback
 import sys
 from datetime import datetime, timedelta, timezone
@@ -60,41 +61,34 @@ def _distribute_results(
 
 async def handle_dm(user_id: str, text: str, say) -> None:
     try:
-        # 1. 의도 분류
-        intent_result = await classify_intent(text)
-        intent = intent_result["intent"]
+        # 0. [키워드] 직접 지정 감지 — AI 의도 분류 건너뜀
+        bracket_matches = re.findall(r"\[([^\]]+)\]", text)
+        if bracket_matches:
+            keyword = " ".join(bracket_matches)
+            max_results = 100
+            intent = "search"
+            date_from = None
+            date_to = None
+            logger.info("사용자 지정 키워드: %s (원문: %s)", keyword, text)
+        else:
+            # 1. 의도 분류
+            intent_result = await classify_intent(text)
+            intent = intent_result["intent"]
 
-        # 2. chat 의도 → AI 직접 답변
-        if intent == "chat":
-            response = await generate_chat_response(text)
-            await say(response)
-            return
+            # 2. chat 의도 → AI 직접 답변
+            if intent == "chat":
+                response = await generate_chat_response(text, user_id=user_id)
+                await say(response)
+                return
 
-        # 3. search 의도 → 검색 흐름
-        keyword = intent_result.get("search_keyword") or text
-        max_results = intent_result.get("max_results") or 50
+            # 3. search 의도 → 검색 흐름
+            keyword = intent_result.get("search_keyword") or text
+            max_results = intent_result.get("max_results") or 100
+            date_from = intent_result.get("date_from")
+            date_to = intent_result.get("date_to")
 
-        # AI가 추출한 키워드에 원문의 핵심 단어가 빠졌는지 검증
-        # 원문 단어 중 keyword에 없는 고유명사(영문, 한글 2자 이상)를 보충
-        if keyword != text:
-            original_words = text.split()
-            keyword_lower = keyword.lower()
-            missing = []
-            _STOP_WORDS = {"관련", "관련해서", "찾아줘", "검색해줘", "보여줘", "알려줘",
-                           "현재", "진행", "내용", "자료", "문서", "히스토리", "관련된",
-                           "해줘", "좀", "에", "대해", "대한", "의", "을", "를", "이", "가",
-                           "은", "는", "로", "으로", "에서", "와", "과", "도", "만", "까지"}
-            for w in original_words:
-                w_clean = w.strip(".,!?~")
-                if not w_clean:
-                    continue
-                if w_clean.lower() in _STOP_WORDS:
-                    continue
-                if w_clean.lower() not in keyword_lower:
-                    missing.append(w_clean)
-            if missing:
-                keyword = " ".join(missing) + " " + keyword
-                logger.info("키워드 보충: %s (원문에서 누락된 단어: %s)", keyword, missing)
+        if date_from or date_to:
+            logger.info("날짜 필터: %s ~ %s", date_from, date_to)
 
         async with AsyncSessionLocal() as db:
             # 사용자 계정 조회 (Google + Atlassian)
@@ -168,8 +162,8 @@ async def handle_dm(user_id: str, text: str, say) -> None:
                 try:
                     access_token = await get_valid_access_token(user=google_user, db=db)
                     google_connected = True
-                    tasks.append(search_gmail(access_token=access_token, query=keyword, max_results=max_results))
-                    tasks.append(search_drive(access_token=access_token, query=keyword, max_results=max_results))
+                    tasks.append(search_gmail(access_token=access_token, query=keyword, max_results=max_results, date_from=date_from, date_to=date_to))
+                    tasks.append(search_drive(access_token=access_token, query=keyword, max_results=max_results, date_from=date_from, date_to=date_to))
                 except Exception:
                     logger.exception("Google 토큰 획득 실패 (user_id=%s)", user_id)
 
@@ -177,8 +171,8 @@ async def handle_dm(user_id: str, text: str, say) -> None:
                 try:
                     atl_token, cloud_id = await get_valid_atlassian_token(user=atlassian_user, db=db)
                     atlassian_connected = True
-                    tasks.append(search_confluence(atl_token, cloud_id, keyword, max_results=max_results))
-                    tasks.append(search_jira(atl_token, cloud_id, keyword, max_results=max_results))
+                    tasks.append(search_confluence(atl_token, cloud_id, keyword, max_results=max_results, date_from=date_from, date_to=date_to))
+                    tasks.append(search_jira(atl_token, cloud_id, keyword, max_results=max_results, date_from=date_from, date_to=date_to))
                 except AtlassianReauthRequired:
                     logger.warning("Atlassian 재인증 필요 (user_id=%s)", user_id)
                 except Exception:
@@ -232,6 +226,7 @@ async def handle_dm(user_id: str, text: str, say) -> None:
             drive_results=drive_results,
             confluence_results=confluence_results,
             jira_results=jira_results,
+            user_id=user_id,
         )
 
         # Block Kit 포맷팅 (미연결 서비스 안내 포함)
@@ -273,6 +268,20 @@ async def handle_dm(user_id: str, text: str, say) -> None:
             google_auth_url=google_auth_url,
             atlassian_auth_url=atlassian_auth_url,
         )
+
+        # 날짜 필터 배너 추가
+        if date_from or date_to:
+            date_banner = "📅 "
+            if date_from and date_to:
+                date_banner += f"{date_from} ~ {date_to} 기간으로 검색했습니다"
+            elif date_from:
+                date_banner += f"{date_from} 이후로 검색했습니다"
+            else:
+                date_banner += f"{date_to} 이전으로 검색했습니다"
+            blocks.insert(0, {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": date_banner}],
+            })
 
         await say(blocks=blocks, text=summary)
 

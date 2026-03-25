@@ -1,3 +1,5 @@
+import re
+
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from app.config import settings
@@ -12,6 +14,11 @@ async def handle_oauth_button(ack):
 
 @slack_app.action("atlassian_oauth_login")
 async def handle_atlassian_oauth_button(ack):
+    await ack()
+
+@slack_app.action(re.compile(r".*"))
+async def handle_any_action(ack):
+    """URL 버튼 등 명시적 핸들러가 없는 action을 조용히 ack 처리."""
     await ack()
 
 

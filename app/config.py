@@ -19,5 +19,8 @@ class Settings(BaseSettings):
     atlassian_client_secret: str = ""
     atlassian_redirect_uri: str = ""
 
+    # Anthropic Claude (빈 문자열이면 Gemini로 fallback)
+    anthropic_api_key: str = ""
+
 
 settings = Settings()

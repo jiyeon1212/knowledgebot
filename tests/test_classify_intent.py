@@ -18,14 +18,26 @@ def _mock_gemini_response(text: str):
     return mock_client
 
 
+def _mock_claude_response(text: str):
+    """Helper to create a mock Claude client that returns the given text."""
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text=text)]
+    mock_claude = AsyncMock()
+    mock_claude.messages.create = AsyncMock(return_value=mock_msg)
+    return mock_claude
+
+
 class TestClassifyIntent:
     async def test_search_intent(self):
         response_json = json.dumps(
             {"intent": "search", "search_keyword": "지난주 회의록", "max_results": None}
         )
-        mock_client = _mock_gemini_response(response_json)
+        mock_claude = _mock_claude_response(response_json)
 
-        with patch("app.ai.summarizer._get_client", return_value=mock_client):
+        with (
+            patch("app.ai.summarizer._use_claude", return_value=True),
+            patch("app.ai.summarizer._get_claude_client", return_value=mock_claude),
+        ):
             result = await classify_intent("지난주 회의록 찾아줘")
 
         assert result["intent"] == "search"
@@ -59,9 +71,12 @@ class TestClassifyIntent:
         assert result["max_results"] == 20
 
     async def test_json_parse_error_fallback(self):
-        mock_client = _mock_gemini_response("이것은 유효하지 않은 JSON입니다")
+        mock_claude = _mock_claude_response("이것은 유효하지 않은 JSON입니다")
 
-        with patch("app.ai.summarizer._get_client", return_value=mock_client):
+        with (
+            patch("app.ai.summarizer._use_claude", return_value=True),
+            patch("app.ai.summarizer._get_claude_client", return_value=mock_claude),
+        ):
             result = await classify_intent("테스트 질문")
 
         assert result["intent"] == "search"
@@ -82,9 +97,12 @@ class TestClassifyIntent:
         response_json = json.dumps(
             {"intent": "unknown", "search_keyword": "테스트", "max_results": None}
         )
-        mock_client = _mock_gemini_response(response_json)
+        mock_claude = _mock_claude_response(response_json)
 
-        with patch("app.ai.summarizer._get_client", return_value=mock_client):
+        with (
+            patch("app.ai.summarizer._use_claude", return_value=True),
+            patch("app.ai.summarizer._get_claude_client", return_value=mock_claude),
+        ):
             result = await classify_intent("테스트")
 
         assert result["intent"] == "search"

@@ -50,12 +50,25 @@ def _extract_content_summary(detail: dict, max_length: int = 200) -> str:
     return body_text
 
 
-async def search_gmail(access_token: str, query: str, max_results: int = 10) -> list[dict]:
+async def search_gmail(access_token: str, query: str, max_results: int = 10, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
+    # 쉼표가 있으면 OR 검색, 없으면 그대로 (공백=AND)
+    if "," in query:
+        parts = [p.strip() for p in query.split(",") if p.strip()]
+        gmail_query = " OR ".join(parts)
+    else:
+        gmail_query = query
+
+    # 날짜 필터 적용 (Gmail: after:YYYY/MM/DD before:YYYY/MM/DD)
+    if date_from:
+        gmail_query += f" after:{date_from.replace('-', '/')}"
+    if date_to:
+        gmail_query += f" before:{date_to.replace('-', '/')}"
+
     service = build_gmail_service(access_token)
 
     def _fetch():
-        print(f"[DEBUG] Gmail API query: '{query}', token: {access_token[:20]}...", flush=True)
-        resp = service.users().messages().list(userId="me", q=query, maxResults=max_results).execute()
+        print(f"[DEBUG] Gmail API query: '{gmail_query}', token: {access_token[:20]}...", flush=True)
+        resp = service.users().messages().list(userId="me", q=gmail_query, maxResults=max_results).execute()
         print(f"[DEBUG] Gmail API raw response keys: {list(resp.keys())}, count: {len(resp.get('messages', []))}", flush=True)
         messages = resp.get("messages", [])
         results = []
