@@ -1,24 +1,11 @@
-"""Slack Modal — 검색 폼 (카테고리/프로젝트명/기간/정렬) + 로그인 후 검색 버튼 발송."""
+"""Slack Modal — 검색 폼 (카테고리/프로젝트명/기간) + 로그인 후 검색 버튼 발송."""
 
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
 from slack_sdk.web.async_client import AsyncWebClient
-from sqlalchemy import select
 
 from app.config import settings
-from app.database import AsyncSessionLocal
-from app.models.user import User
-from app.models.atlassian_user import AtlassianUser
-from app.google.gmail import search_gmail
-from app.google.drive import search_drive
-from app.google.token_refresh import get_valid_access_token
-from app.atlassian.token_refresh import get_valid_atlassian_token, AtlassianReauthRequired
-from app.atlassian.confluence import search_confluence
-from app.atlassian.jira import search_jira
-from app.ai.summarizer import summarize_results, filter_irrelevant_results
-from app.slack.block_kit import format_search_response
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +93,7 @@ SEARCH_BUTTON_BLOCKS = [
         "type": "section",
         "text": {
             "type": "mrkdwn",
-            "text": "💬 채팅창에 자연어로 질문하셔도 검색이 가능합니다.\n🔍 *검색하기* 버튼을 누르시면 카테고리·기간·정렬 등을 직접 지정해 더 정확한 검색을 할 수 있습니다.",
+            "text": "🔍 *검색하기* 버튼을 누르시면 카테고리·기간 등을 직접 지정해 더 정확한 검색을 할 수 있습니다.",
         },
     },
     {
@@ -194,32 +181,13 @@ async def handle_open_search_modal(ack, body, client):
 # Modal 제출 핸들러
 # ---------------------------------------------------------------------------
 
-def _distribute_results(
-    processed: list[list],
-    google_connected: bool,
-    atlassian_connected: bool,
-) -> tuple[list, list, list, list]:
-    """gather 결과를 서비스별로 분배한다."""
-    idx = 0
-    gmail_results: list = []
-    drive_results: list = []
-    confluence_results: list = []
-    jira_results: list = []
-
-    if google_connected:
-        gmail_results = processed[idx]; idx += 1
-        drive_results = processed[idx]; idx += 1
-
-    if atlassian_connected:
-        confluence_results = processed[idx]; idx += 1
-        jira_results = processed[idx]; idx += 1
-
-    return gmail_results, drive_results, confluence_results, jira_results
-
 
 
 async def handle_search_modal_submit(ack, body, client):
-    """Modal 제출 시 검색을 실행한다."""
+    """Modal 제출 시 검색을 실행한다.
+
+    팀원이 만든 handle_project_search를 재활용한다.
+    """
     await ack()
 
     user_id = body["user"]["id"]
@@ -236,13 +204,8 @@ async def handle_search_modal_submit(ack, body, client):
     # 직접 입력 기간 처리
     custom_date_text = None
     if date_to == "__custom__":
-        custom_date_text = date_from  # 사용자가 입력한 기간 텍스트
+        custom_date_text = date_from
         date_from, date_to = None, None
-
-    # 카테고리에 따라 검색 키워드 조합
-    keyword = project_name
-
-    slack_client = AsyncWebClient(token=settings.slack_bot_token)
 
     # 직접 입력 기간이 있으면 AI 의도 분류로 날짜 파싱
     if custom_date_text:
@@ -251,6 +214,8 @@ async def handle_search_modal_submit(ack, body, client):
         intent_result = await classify_intent(date_query)
         date_from = intent_result.get("date_from")
         date_to = intent_result.get("date_to")
+
+    slack_client = AsyncWebClient(token=settings.slack_bot_token)
 
     # 검색 중 메시지
     period_text = ""
@@ -263,150 +228,28 @@ async def handle_search_modal_submit(ack, body, client):
         text=f"🔍 *{project_name}* 검색 중... ({_category_label(category)}{period_text})",
     )
 
-    try:
-        async with AsyncSessionLocal() as db:
-            # 사용자 계정 조회
-            google_result = await db.execute(
-                select(User).where(User.slack_user_id == user_id)
-            )
-            google_user = google_result.scalar_one_or_none()
+    # 프로젝트명을 리스트로 변환 (쉼표 구분 지원)
+    project_names = [p.strip() for p in project_name.split(",") if p.strip()]
 
-            atlassian_result = await db.execute(
-                select(AtlassianUser).where(AtlassianUser.slack_user_id == user_id)
-            )
-            atlassian_user = atlassian_result.scalar_one_or_none()
+    # handlers.py의 handle_project_search 호출
+    from app.slack.handlers import handle_project_search
 
-            google_connected = False
-            atlassian_connected = False
-            tasks = []
-            max_results = 100
-
-            if google_user:
-                try:
-                    access_token = await get_valid_access_token(user=google_user, db=db)
-                    google_connected = True
-                    tasks.append(search_gmail(access_token=access_token, query=keyword, max_results=max_results, date_from=date_from, date_to=date_to))
-                    tasks.append(search_drive(access_token=access_token, query=keyword, max_results=max_results, date_from=date_from, date_to=date_to))
-                except Exception:
-                    logger.exception("Google token failed (user_id=%s)", user_id)
-
-            if atlassian_user:
-                try:
-                    atl_token, cloud_id = await get_valid_atlassian_token(user=atlassian_user, db=db)
-                    atlassian_connected = True
-                    tasks.append(search_confluence(atl_token, cloud_id, keyword, max_results=max_results, date_from=date_from, date_to=date_to))
-                    tasks.append(search_jira(atl_token, cloud_id, keyword, max_results=max_results, date_from=date_from, date_to=date_to))
-                except AtlassianReauthRequired:
-                    logger.warning("Atlassian reauth required (user_id=%s)", user_id)
-                except Exception:
-                    logger.exception("Atlassian token failed (user_id=%s)", user_id)
-
-            if not tasks:
-                await slack_client.chat_postMessage(
-                    channel=user_id,
-                    text="서비스 연결에 문제가 발생했습니다. 다시 인증해 주세요.",
-                )
-                return
-
-            # 병렬 검색
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            processed = []
-            for r in results:
-                if isinstance(r, Exception):
-                    logger.error("Search failed: %s", r)
-                    processed.append([])
-                else:
-                    processed.append(r)
-
-            gmail_results, drive_results, confluence_results, jira_results = _distribute_results(
-                processed, google_connected, atlassian_connected
-            )
-
-        # AI 관련성 필터링
-        gmail_results, drive_results, confluence_results, jira_results = await asyncio.gather(
-            filter_irrelevant_results(project_name, gmail_results, "gmail"),
-            filter_irrelevant_results(project_name, drive_results, "drive"),
-            filter_irrelevant_results(project_name, confluence_results, "confluence"),
-            filter_irrelevant_results(project_name, jira_results, "jira"),
-        )
-
-        total = len(gmail_results) + len(drive_results) + len(confluence_results) + len(jira_results)
-        if total == 0:
-            await slack_client.chat_postMessage(
-                channel=user_id,
-                text=f"🔍 '{project_name}' 관련 검색 결과를 찾지 못했습니다. 다른 키워드로 검색해 보세요.",
-            )
-            return
-
-        # 요약 생성
-        question = f"[{_category_label(category)}] {project_name}"
-        summary = await summarize_results(
-            question=question,
-            gmail_results=gmail_results,
-            drive_results=drive_results,
-            confluence_results=confluence_results,
-            jira_results=jira_results,
-            user_id=user_id,
-        )
-
-        # Block Kit 포맷
-        blocks = format_search_response(
-            summary_text=summary,
-            gmail_results=gmail_results,
-            drive_results=drive_results,
-            confluence_results=confluence_results,
-            jira_results=jira_results,
-        )
-
-        # 날짜 필터 배너
-        if date_from or date_to:
-            date_banner = "📅 "
-            if date_from and date_to:
-                date_banner += f"{date_from} ~ {date_to} 기간으로 검색했습니다"
-            elif date_from:
-                date_banner += f"{date_from} 이후로 검색했습니다"
-            else:
-                date_banner += f"{date_to} 이전으로 검색했습니다"
-            blocks.insert(0, {
-                "type": "context",
-                "elements": [{"type": "mrkdwn", "text": date_banner}],
-            })
-
-        # 카테고리 배너
-        blocks.insert(0, {
-            "type": "context",
-            "elements": [{"type": "mrkdwn", "text": f"📂 {_category_label(category)} | 🏷️ {project_name}"}],
-        })
-
-        # "다시 검색" 버튼 추가
-        blocks.append({"type": "divider"})
-        blocks.append({
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "🔍 다시 검색"},
-                    "style": "primary",
-                    "action_id": "open_search_modal",
-                },
-            ],
-        })
-
-        # 50블록 제한
-        blocks = blocks[:50]
-
+    async def say_via_api(text=None, blocks=None, **kwargs):
+        """Modal에서는 say가 없으므로 API로 대체한다."""
         await slack_client.chat_postMessage(
             channel=user_id,
+            text=text or "",
             blocks=blocks,
-            text=summary,
         )
 
-    except Exception:
-        logger.exception("Modal search failed for user %s", user_id)
-        await slack_client.chat_postMessage(
-            channel=user_id,
-            text="⚠️ 검색 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
-        )
+    await handle_project_search(
+        user_id=user_id,
+        project_names=project_names,
+        category=category,
+        date_from=date_from,
+        date_to=date_to,
+        say=say_via_api,
+    )
 
 
 def _resolve_date_range(preset: str, values: dict) -> tuple[str | None, str | None]:

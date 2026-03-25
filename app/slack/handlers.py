@@ -580,6 +580,13 @@ async def handle_project_search(
                 "elements": [{"type": "mrkdwn", "text": date_banner}],
             })
 
+        # 검색 안내 + 버튼 추가
+        from app.slack.modal import SEARCH_BUTTON_BLOCKS
+        blocks.append({"type": "divider"})
+        blocks.append(SEARCH_BUTTON_BLOCKS[1])  # 안내 문구
+        blocks.append(SEARCH_BUTTON_BLOCKS[2])  # 검색하기 버튼
+        blocks = blocks[:50]
+
         await say(blocks=blocks, text=summary)
 
     except Exception as e:

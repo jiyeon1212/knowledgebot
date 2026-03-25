@@ -249,7 +249,7 @@ async def search_confluence_by_project(
                 title_resp = await client.get(
                     url,
                     params={
-                        "cql": f'type=page AND title~"{project_name}"',
+                        "cql": f'type=page AND title~"{project_name}"{date_cql}',
                         "limit": 10,
                     },
                     headers=headers,
