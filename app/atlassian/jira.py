@@ -136,3 +136,93 @@ async def search_jira(
     except Exception:
         logger.exception("Jira 검색 실패 (cloud_id=%s, query=%s)", cloud_id, query)
         return []
+
+
+# ---------------------------------------------------------------------------
+# 프로젝트 기반 검색 (프로젝트 찾기 → 이슈 전체 조회)
+# ---------------------------------------------------------------------------
+
+async def search_jira_by_project(
+    access_token: str,
+    cloud_id: str,
+    project_names: list[str],
+    max_results: int = 50,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict]:
+    """프로젝트명으로 Jira 이슈를 검색한다.
+
+    1. summary/description에 프로젝트명이 포함된 이슈 검색
+    2. 콤마로 구분된 여러 프로젝트명은 OR로 결합
+    """
+    try:
+        url = _JIRA_SEARCH_URL.format(cloud_id=cloud_id)
+
+        # 프로젝트명을 OR로 결합하여 summary/description 검색
+        conditions: list[str] = []
+        for name in project_names:
+            conditions.append(f'summary ~ "{name}" OR description ~ "{name}"')
+        jql = "(" + " OR ".join(conditions) + ")"
+
+        # 날짜 필터
+        if date_from:
+            jql += f' AND updated >= "{date_from}"'
+        if date_to:
+            jql += f' AND updated <= "{date_to}"'
+
+        params = {
+            "jql": jql,
+            "maxResults": max_results,
+            "fields": "summary,status,assignee,priority,updated",
+        }
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+
+        site_url = await _get_site_url(access_token, cloud_id)
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, params=params, headers=headers)
+            resp.raise_for_status()
+
+        data = resp.json()
+        results: list[dict] = []
+
+        for issue in data.get("issues", []):
+            key = issue.get("key", "")
+            fields = issue.get("fields", {})
+
+            title = fields.get("summary", "")
+            status = (fields.get("status") or {}).get("name", "")
+            assignee = (fields.get("assignee") or {}).get("displayName", "미지정")
+            priority = (fields.get("priority") or {}).get("name", "")
+
+            if site_url and key:
+                link = f"{site_url}/browse/{key}"
+            else:
+                self_link = issue.get("self", "")
+                if self_link and key:
+                    base_url = _extract_base_url(self_link)
+                    link = f"{base_url}/browse/{key}"
+                else:
+                    link = ""
+
+            results.append({
+                "key": key,
+                "title": title,
+                "status": status,
+                "assignee": assignee,
+                "priority": priority,
+                "updated": fields.get("updated", ""),
+                "link": link,
+            })
+
+        return results
+
+    except Exception:
+        logger.exception(
+            "Jira 프로젝트 검색 실패 (cloud_id=%s, projects=%s)",
+            cloud_id, project_names,
+        )
+        return []

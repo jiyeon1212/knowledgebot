@@ -6,13 +6,24 @@ _KST = timezone(timedelta(hours=9))
 
 
 def _format_date(raw: str) -> str:
-    """ISO 8601 날짜 문자열을 '2024.08.26' 형식으로 변환한다."""
+    """날짜 문자열을 '2024.08.26' 형식으로 변환한다.
+
+    지원 형식:
+    - ISO 8601 (예: "2024-08-26T10:00:00Z")
+    - epoch milliseconds (예: "1773978410000") — Gmail internalDate
+    """
     if not raw:
         return ""
     try:
+        raw = str(raw).strip()
+        # epoch milliseconds (숫자로만 구성된 13자리 이상)
+        if raw.isdigit() and len(raw) >= 13:
+            dt = datetime.fromtimestamp(int(raw) / 1000, tz=timezone.utc)
+            return dt.astimezone(_KST).strftime("%Y.%m.%d")
+        # ISO 8601
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         return dt.astimezone(_KST).strftime("%Y.%m.%d")
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OSError):
         return raw
 
 
@@ -190,12 +201,13 @@ def _make_link_button(text: str, url: str) -> dict:
 def _gmail_block(item: dict) -> dict:
     subject = item.get("subject", "(제목 없음)")
     sender = item.get("from", "")
-    content_summary = item.get("content_summary", "")
+    date = _format_date(item.get("date", ""))
     link = item.get("link", "")
 
-    lines = [f"*{subject}*", f"보낸이: {sender}"]
-    if content_summary:
-        lines.append(content_summary)
+    lines = [f"*{subject}*"]
+    lines.append(f"보낸이: {sender}")
+    if date:
+        lines.append(f"수신일: {date}")
 
     block: dict = {
         "type": "section",
@@ -226,17 +238,10 @@ def _drive_block(item: dict) -> dict:
 
 def _confluence_block(item: dict) -> dict:
     title = item.get("title", "(제목 없음)")
-    space_name = item.get("space_name", "")
-    content_summary = item.get("content_summary", "")
     modified = _format_date(item.get("modified", ""))
     link = item.get("link", "")
 
-    header = f"*{title}*"
-    if space_name:
-        header += f" — {space_name}"
-    lines = [header]
-    if content_summary:
-        lines.append(content_summary)
+    lines = [f"*{title}*"]
     if modified:
         lines.append(f"수정일: {modified}")
 
@@ -252,24 +257,13 @@ def _confluence_block(item: dict) -> dict:
 def _jira_block(item: dict) -> dict:
     key = item.get("key", "")
     title = item.get("title", "(제목 없음)")
-    status = item.get("status", "")
     assignee = item.get("assignee", "")
-    priority = item.get("priority", "")
     link = item.get("link", "")
 
     header = f"*[{key}] {title}*" if key else f"*{title}*"
-    meta_parts: list[str] = []
-    if status:
-        emoji = _jira_status_emoji(status)
-        meta_parts.append(f"상태: {emoji}{status}")
-    if assignee:
-        meta_parts.append(f"담당자: {assignee}")
-    if priority:
-        meta_parts.append(f"우선순위: {priority}")
-
     lines = [header]
-    if meta_parts:
-        lines.append(" | ".join(meta_parts))
+    if assignee:
+        lines.append(f"담당자: {assignee}")
 
     block: dict = {
         "type": "section",

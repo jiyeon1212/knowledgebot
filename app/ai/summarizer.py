@@ -512,6 +512,130 @@ async def filter_irrelevant_results(
         return results
 
 
+# ---------------------------------------------------------------------------
+# AI 카테고리 필터링 (프로젝트 기반 검색용)
+# ---------------------------------------------------------------------------
+
+_CATEGORY_FILTER_PROMPT = """\
+아래 문서 목록에서 **{category_description}**에 해당하는 문서만 골라주세요.
+
+판단 기준:
+- "사업 관련": 제안서, 기안서, 견적서, 계약서, 발주서, 검수서, 사업계획, 고객 요구사항, \
+RFP, 입찰, 수주, 회의록(사업 논의), 고객 미팅, 프로젝트 관리 문서 등
+- "개발 관련": API 문서, SDK 가이드, 연동 가이드, 설계 문서, 테스트 케이스, 개발 명세, \
+코드 리뷰, 아키텍처, 스펙, 배포, 인프라, 기술 검토 등
+
+제목이나 내용 요약을 보고 판단하세요.
+양쪽 모두에 해당할 수 있는 문서(예: 프로젝트 일정, 킥오프 회의록)는 포함시키세요.
+판단이 어려운 경우에도 포함시키세요.
+
+반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트 없이 JSON만 출력하세요:
+{{"relevant_indices": [0, 2, 5]}}
+
+관련 있는 항목의 인덱스(0부터 시작)를 배열로 반환하세요.
+모든 항목이 관련 있으면 전체 인덱스를 반환하세요.
+"""
+
+
+async def filter_by_category(
+    category: str,
+    category_description: str,
+    results: list[dict],
+    source_type: str,
+) -> list[dict]:
+    """AI를 사용하여 카테고리(사업/개발)에 맞는 문서만 필터링한다.
+
+    Parameters:
+        category: "business" | "development"
+        category_description: 카테고리 설명 문자열
+        results: 플랫폼 검색 결과 리스트
+        source_type: "gmail" | "drive" | "confluence" | "jira"
+
+    Returns:
+        카테고리에 맞는 결과만 포함된 리스트
+    """
+    if not results:
+        return results
+
+    # 결과가 3개 이하면 필터링 불필요
+    if len(results) <= 3:
+        return results
+
+    # 결과를 간략한 텍스트로 변환
+    items_text: list[str] = []
+    for i, r in enumerate(results):
+        if source_type == "gmail":
+            items_text.append(
+                f"[{i}] 제목: {r.get('subject', '')}, 보낸이: {r.get('from', '')}, "
+                f"내용: {r.get('content_summary', r.get('snippet', ''))[:100]}"
+            )
+        elif source_type == "drive":
+            items_text.append(f"[{i}] 파일명: {r.get('name', '')}")
+        elif source_type == "confluence":
+            items_text.append(
+                f"[{i}] 제목: {r.get('title', '')}, "
+                f"내용: {r.get('content_summary', '')[:100]}"
+            )
+        elif source_type == "jira":
+            items_text.append(
+                f"[{i}] [{r.get('key', '')}] {r.get('title', '')}, "
+                f"상태: {r.get('status', '')}"
+            )
+
+    prompt = (
+        _CATEGORY_FILTER_PROMPT.format(category_description=category_description)
+        + "\n\n"
+        + "\n".join(items_text)
+    )
+
+    try:
+        if _use_claude():
+            claude = _get_claude_client()
+            print(f"[DEBUG] [AI] 카테고리 필터링 ({source_type}): Claude")
+            response = await claude.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=256,
+                system="반드시 JSON만 출력하세요. 다른 텍스트 없이 JSON만 출력하세요.",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = response.content[0].text.strip()
+        else:
+            client = _get_client()
+            print(f"[DEBUG] [AI] 카테고리 필터링 ({source_type}): Gemini")
+            response = await client.aio.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
+            raw = response.text.strip()
+
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+            if raw.endswith("```"):
+                raw = raw[:-3].strip()
+
+        parsed = json.loads(raw)
+        indices = parsed.get("relevant_indices", [])
+
+        if not isinstance(indices, list):
+            return results
+
+        filtered = [results[i] for i in indices if isinstance(i, int) and 0 <= i < len(results)]
+
+        logger.info(
+            "AI 카테고리 필터링: %s %d건 → %d건 (category=%s)",
+            source_type, len(results), len(filtered), category,
+        )
+        return filtered
+
+    except Exception:
+        logger.exception(
+            "AI 카테고리 필터링 실패 (category=%s, source=%s) — 원본 결과 유지",
+            category, source_type,
+        )
+        return results
+
+
 CHAT_SYSTEM_PROMPT = """당신은 친절한 한국어 AI 어시스턴트입니다.
 사용자와 자연스럽게 대화하세요. 간결하고 친근하게 답변하세요."""
 
