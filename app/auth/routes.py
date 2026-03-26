@@ -107,7 +107,7 @@ async def google_callback(code: str, state: str, db: AsyncSession = Depends(get_
         else:
             await slack_client.chat_postMessage(
                 channel=slack_user_id,
-                text="✅ Google 계정 연결 완료! *Atlassian* 계정도 연결해주세요. 아무 메시지를 보내면 로그인 버튼이 나옵니다.",
+                text="✅ Google 계정 연결 완료! *Atlassian* 계정도 연결해주세요.",
             )
     except Exception:
         logger.exception("Failed to send Slack DM after OAuth for user %s", slack_user_id)
@@ -215,7 +215,7 @@ async def atlassian_callback(code: str, state: str, db: AsyncSession = Depends(g
         else:
             await slack_client.chat_postMessage(
                 channel=slack_user_id,
-                text="✅ Atlassian 계정 연결 완료! *Google* 계정도 연결해주세요. 아무 메시지를 보내면 로그인 버튼이 나옵니다.",
+                text="✅ Atlassian 계정 연결 완료! *Google* 계정도 연결해주세요.",
             )
     except Exception:
         logger.exception("Failed to send Slack DM after Atlassian OAuth for user %s", slack_user_id)
