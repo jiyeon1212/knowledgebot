@@ -111,27 +111,43 @@ async def handle_dm(user_id: str, text: str, say) -> None:
             )
             return
 
-        # 0-2. 미연동 사용자 → 로그인 버튼 (의도 분류 전에 체크)
+        # 0-2. 미연동 사용자 → 로그인 버튼 (둘 다 연결해야 검색 가능)
         async with AsyncSessionLocal() as db:
             _g = await db.execute(select(User).where(User.slack_user_id == user_id))
             _a = await db.execute(select(AtlassianUser).where(AtlassianUser.slack_user_id == user_id))
-            if not _g.scalar_one_or_none() and not _a.scalar_one_or_none():
-                google_auth_url, google_state = build_auth_url()
-                atlassian_auth_url, atlassian_state = build_atlassian_auth_url()
+            google_user = _g.scalar_one_or_none()
+            atlassian_user = _a.scalar_one_or_none()
+
+            if not google_user or not atlassian_user:
                 now = datetime.now(timezone.utc)
                 expires_at = now + timedelta(minutes=_STATE_TTL_MINUTES)
-                db.add(OAuthState(state=google_state, slack_user_id=user_id, expires_at=expires_at))
-                db.add(OAuthState(state=atlassian_state, slack_user_id=user_id, expires_at=expires_at))
+                buttons = []
+
+                if not google_user:
+                    google_auth_url, google_state = build_auth_url()
+                    db.add(OAuthState(state=google_state, slack_user_id=user_id, expires_at=expires_at))
+                    buttons.append({"type": "button", "text": {"type": "plain_text", "text": "Google 로그인"}, "url": google_auth_url, "action_id": "google_oauth_login"})
+
+                if not atlassian_user:
+                    atlassian_auth_url, atlassian_state = build_atlassian_auth_url()
+                    db.add(OAuthState(state=atlassian_state, slack_user_id=user_id, expires_at=expires_at))
+                    buttons.append({"type": "button", "text": {"type": "plain_text", "text": "Atlassian 로그인"}, "url": atlassian_auth_url, "action_id": "atlassian_oauth_login"})
+
                 await db.commit()
+
+                if not google_user and not atlassian_user:
+                    msg = "안녕하세요! 검색을 위해 *Google*과 *Atlassian* 계정을 모두 연결해주세요."
+                elif not google_user:
+                    msg = "✅ Atlassian 연결 완료! *Google* 계정도 연결해주세요."
+                else:
+                    msg = "✅ Google 연결 완료! *Atlassian* 계정도 연결해주세요."
+
                 await say(
                     blocks=[
-                        {"type": "section", "text": {"type": "mrkdwn", "text": "안녕하세요! 검색을 위해 계정을 연결해주세요."}},
-                        {"type": "actions", "elements": [
-                            {"type": "button", "text": {"type": "plain_text", "text": "Google 로그인"}, "url": google_auth_url, "action_id": "google_oauth_login"},
-                            {"type": "button", "text": {"type": "plain_text", "text": "Atlassian 로그인"}, "url": atlassian_auth_url, "action_id": "atlassian_oauth_login"},
-                        ]},
+                        {"type": "section", "text": {"type": "mrkdwn", "text": msg}},
+                        {"type": "actions", "elements": buttons},
                     ],
-                    text="계정 연결이 필요합니다.",
+                    text=msg,
                 )
                 return
 

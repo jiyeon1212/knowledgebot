@@ -95,19 +95,22 @@ async def google_callback(code: str, state: str, db: AsyncSession = Depends(get_
 
     await db.commit()
 
-    # Slack DM 자동 발송 — 실패해도 OAuth 결과에 영향 없음
+    # Atlassian도 연결됐는지 확인
+    atl_result = await db.execute(select(AtlassianUser).where(AtlassianUser.slack_user_id == slack_user_id))
+    both_connected = atl_result.scalar_one_or_none() is not None
+
     try:
         slack_client = AsyncWebClient(token=settings.slack_bot_token)
-        await slack_client.chat_postMessage(
-            channel=slack_user_id,
-            text="✅ Google 계정이 연결됐습니다! 이제 질문을 입력해보세요.",
-        )
+        if both_connected:
+            from app.slack.modal import send_search_button
+            await send_search_button(slack_user_id)
+        else:
+            await slack_client.chat_postMessage(
+                channel=slack_user_id,
+                text="✅ Google 계정 연결 완료! *Atlassian* 계정도 연결해주세요. 아무 메시지를 보내면 로그인 버튼이 나옵니다.",
+            )
     except Exception:
         logger.exception("Failed to send Slack DM after OAuth for user %s", slack_user_id)
-
-    # 검색 Modal 버튼 발송
-    from app.slack.modal import send_search_button
-    await send_search_button(slack_user_id)
 
     return HTMLResponse(content=_SUCCESS_HTML)
 
@@ -202,16 +205,20 @@ async def atlassian_callback(code: str, state: str, db: AsyncSession = Depends(g
     # Slack DM 자동 발송 — 실패해도 OAuth 결과에 영향 없음
     try:
         slack_client = AsyncWebClient(token=settings.slack_bot_token)
-        await slack_client.chat_postMessage(
-            channel=slack_user_id,
-            text="✅ Atlassian 계정이 연결됐습니다! 이제 Confluence/Jira 검색이 가능합니다.",
-        )
+        # Google도 연결됐는지 확인
+        google_result = await db.execute(select(User).where(User.slack_user_id == slack_user_id))
+        both_connected = google_result.scalar_one_or_none() is not None
+
+        if both_connected:
+            from app.slack.modal import send_search_button
+            await send_search_button(slack_user_id)
+        else:
+            await slack_client.chat_postMessage(
+                channel=slack_user_id,
+                text="✅ Atlassian 계정 연결 완료! *Google* 계정도 연결해주세요. 아무 메시지를 보내면 로그인 버튼이 나옵니다.",
+            )
     except Exception:
         logger.exception("Failed to send Slack DM after Atlassian OAuth for user %s", slack_user_id)
-
-    # 검색 Modal 버튼 발송
-    from app.slack.modal import send_search_button
-    await send_search_button(slack_user_id)
 
     return HTMLResponse(content=_ATLASSIAN_SUCCESS_HTML)
 
