@@ -136,7 +136,7 @@ async def handle_dm(user_id: str, text: str, say) -> None:
                 await db.commit()
 
                 if not google_user and not atlassian_user:
-                    msg = "안녕하세요! 검색을 위해 *Google*과 *Atlassian* 계정을 모두 연결해주세요."
+                    msg = "안녕하세요! 검색을 위해 *Google* 과 *Atlassian* 계정을 모두 연결해주세요."
                 elif not google_user:
                     msg = "✅ Atlassian 연결 완료! *Google* 계정도 연결해주세요."
                 else:
