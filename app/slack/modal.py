@@ -47,7 +47,7 @@ SEARCH_MODAL = {
             "element": {
                 "type": "plain_text_input",
                 "action_id": "project_input",
-                "placeholder": {"type": "plain_text", "text": "예: 미래에셋 제안서"},
+                "placeholder": {"type": "plain_text", "text": "예: broof, 브루프"},
             },
         },
         {
