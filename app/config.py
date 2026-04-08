@@ -9,18 +9,15 @@ class Settings(BaseSettings):
     google_client_id: str
     google_client_secret: str
     google_redirect_uri: str
-    gemini_api_key: str
     database_url: str
     fernet_key: str
     app_base_url: str
+    anthropic_api_key: str
 
     # Atlassian OAuth (빈 문자열이면 Atlassian 기능 비활성화)
     atlassian_client_id: str = ""
     atlassian_client_secret: str = ""
     atlassian_redirect_uri: str = ""
-
-    # Anthropic Claude (빈 문자열이면 Gemini로 fallback)
-    anthropic_api_key: str = ""
 
 
 settings = Settings()

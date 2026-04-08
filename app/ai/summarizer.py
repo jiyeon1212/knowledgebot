@@ -2,7 +2,6 @@ import json
 import logging
 
 import anthropic
-from google import genai
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -13,17 +12,12 @@ logger = logging.getLogger(__name__)
 _claude_client: anthropic.AsyncAnthropic | None = None
 
 
-def _get_claude_client() -> anthropic.AsyncAnthropic | None:
-    """Anthropic API 키가 설정되어 있으면 AsyncAnthropic 클라이언트를 반환한다."""
+def _get_claude_client() -> anthropic.AsyncAnthropic:
+    """AsyncAnthropic 클라이언트를 반환한다."""
     global _claude_client
-    if _claude_client is None and settings.anthropic_api_key:
+    if _claude_client is None:
         _claude_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
     return _claude_client
-
-
-def _use_claude() -> bool:
-    """Claude를 사용할 수 있는지 여부를 반환한다."""
-    return bool(settings.anthropic_api_key)
 
 
 
@@ -103,16 +97,6 @@ INTENT_CLASSIFICATION_PROMPT = """\
 
 사용자 메시지: """
 
-_client = None
-
-
-def _get_client() -> genai.Client:
-    global _client
-    if _client is None:
-        _client = genai.Client(api_key=settings.gemini_api_key)
-    return _client
-
-
 _VALID_ENTITY_TYPES = {"고객사", "담당자", "프로젝트", "팀"}
 
 
@@ -162,24 +146,15 @@ async def classify_intent(user_text: str) -> dict:
     """
     prompt_text = INTENT_CLASSIFICATION_PROMPT + user_text
 
-    if _use_claude():
-        claude = _get_claude_client()
-        print("[DEBUG] [AI] 의도 분류: Claude (claude-sonnet-4-20250514)")
-        response = await claude.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=256,
-            system="반드시 JSON만 출력하세요. 다른 텍스트 없이 JSON만 출력하세요.",
-            messages=[{"role": "user", "content": prompt_text}],
-        )
-        raw = response.content[0].text.strip()
-    else:
-        client = _get_client()
-        print("[DEBUG] [AI] 의도 분류: Gemini (gemini-2.5-flash)")
-        response = await client.aio.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt_text,
-        )
-        raw = response.text.strip()
+    claude = _get_claude_client()
+    print("[DEBUG] [AI] 의도 분류: Claude (claude-sonnet-4-20250514)")
+    response = await claude.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=256,
+        system="반드시 JSON만 출력하세요. 다른 텍스트 없이 JSON만 출력하세요.",
+        messages=[{"role": "user", "content": prompt_text}],
+    )
+    raw = response.content[0].text.strip()
 
     try:
         # Strip markdown code fences if present
@@ -291,28 +266,17 @@ async def summarize_results(
     context = _build_search_context(gmail_results, drive_results, confluence_results, jira_results)
     user_message = f"[검색 결과]\n{context}\n\n[질문]\n{question}"
 
-    if _use_claude():
-        claude = _get_claude_client()
-        messages = [{"role": "user", "content": user_message}]
+    claude = _get_claude_client()
+    messages = [{"role": "user", "content": user_message}]
 
-        print("[DEBUG] [AI] 요약 생성: Claude (claude-sonnet-4-20250514)")
-        response = await claude.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2048,
-            system=SYSTEM_PROMPT,
-            messages=messages,
-        )
-        return response.content[0].text
-
-    # Gemini fallback
-    print("[DEBUG] [AI] 요약 생성: Gemini (gemini-2.5-flash)")
-    client = _get_client()
-    prompt = f"{SYSTEM_PROMPT}\n\n{user_message}"
-    response = await client.aio.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
+    print("[DEBUG] [AI] 요약 생성: Claude (claude-sonnet-4-20250514)")
+    response = await claude.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=2048,
+        system=SYSTEM_PROMPT,
+        messages=messages,
     )
-    return response.text
+    return response.content[0].text
 
 ENTITY_SUMMARY_PROMPT = """\
 당신은 엔티티 중심으로 검색 결과를 요약하는 AI 어시스턴트입니다.
@@ -386,28 +350,17 @@ async def summarize_entity_results(
     )
     user_message = f"[검색 결과]\n{context}"
 
-    if _use_claude():
-        claude = _get_claude_client()
-        messages = [{"role": "user", "content": user_message}]
+    claude = _get_claude_client()
+    messages = [{"role": "user", "content": user_message}]
 
-        print("[DEBUG] [AI] 엔티티 요약: Claude (claude-sonnet-4-20250514)")
-        response = await claude.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2048,
-            system=system_prompt,
-            messages=messages,
-        )
-        return response.content[0].text
-
-    # Gemini fallback
-    print("[DEBUG] [AI] 엔티티 요약: Gemini (gemini-2.5-flash)")
-    client = _get_client()
-    prompt = system_prompt + f"\n\n{user_message}"
-    response = await client.aio.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
+    print("[DEBUG] [AI] 엔티티 요약: Claude (claude-sonnet-4-20250514)")
+    response = await claude.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=2048,
+        system=system_prompt,
+        messages=messages,
     )
-    return response.text
+    return response.content[0].text
 
 
 
@@ -455,8 +408,6 @@ async def filter_irrelevant_results(
     if len(results) <= 3:
         return results
 
-    client = _get_client()
-
     # 결과를 간략한 텍스트로 변환
     items_text: list[str] = []
     for i, r in enumerate(results):
@@ -481,12 +432,15 @@ async def filter_irrelevant_results(
     prompt = _RELEVANCE_FILTER_PROMPT.format(keyword=keyword) + "\n\n" + "\n".join(items_text)
 
     try:
-        print(f"[DEBUG] [AI] 관련성 필터링 ({source_type}): Gemini (gemini-2.5-flash)")
-        response = await client.aio.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
+        claude = _get_claude_client()
+        print(f"[DEBUG] [AI] 관련성 필터링 ({source_type}): Claude (claude-sonnet-4-20250514)")
+        response = await claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=256,
+            system="반드시 JSON만 출력하세요. 다른 텍스트 없이 JSON만 출력하세요.",
+            messages=[{"role": "user", "content": prompt}],
         )
-        raw = response.text.strip()
+        raw = response.content[0].text.strip()
         # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
@@ -589,24 +543,15 @@ async def filter_by_category(
     )
 
     try:
-        if _use_claude():
-            claude = _get_claude_client()
-            print(f"[DEBUG] [AI] 카테고리 필터링 ({source_type}): Claude")
-            response = await claude.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=256,
-                system="반드시 JSON만 출력하세요. 다른 텍스트 없이 JSON만 출력하세요.",
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = response.content[0].text.strip()
-        else:
-            client = _get_client()
-            print(f"[DEBUG] [AI] 카테고리 필터링 ({source_type}): Gemini")
-            response = await client.aio.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-            )
-            raw = response.text.strip()
+        claude = _get_claude_client()
+        print(f"[DEBUG] [AI] 카테고리 필터링 ({source_type}): Claude (claude-sonnet-4-20250514)")
+        response = await claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=256,
+            system="반드시 JSON만 출력하세요. 다른 텍스트 없이 JSON만 출력하세요.",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip()
 
         # Strip markdown code fences if present
         if raw.startswith("```"):
@@ -646,25 +591,14 @@ async def generate_chat_response(user_text: str, user_id: str | None = None) -> 
     Claude가 설정되어 있으면 Claude를 사용하고, 아니면 Gemini fallback.
     user_id가 주어지면 멀티턴 대화 히스토리를 활용한다.
     """
-    if _use_claude():
-        claude = _get_claude_client()
-        messages = [{"role": "user", "content": user_text}]
+    claude = _get_claude_client()
+    messages = [{"role": "user", "content": user_text}]
 
-        print("[DEBUG] [AI] 채팅 응답: Claude (claude-sonnet-4-20250514)")
-        response = await claude.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1024,
-            system=CHAT_SYSTEM_PROMPT,
-            messages=messages,
-        )
-        return response.content[0].text
-
-    # Gemini fallback
-    print("[DEBUG] [AI] 채팅 응답: Gemini (gemini-2.5-flash)")
-    client = _get_client()
-    prompt = f"{CHAT_SYSTEM_PROMPT}\n\n사용자: {user_text}"
-    response = await client.aio.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
+    print("[DEBUG] [AI] 채팅 응답: Claude (claude-sonnet-4-20250514)")
+    response = await claude.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1024,
+        system=CHAT_SYSTEM_PROMPT,
+        messages=messages,
     )
-    return response.text
+    return response.content[0].text

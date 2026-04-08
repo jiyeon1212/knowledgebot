@@ -35,20 +35,20 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Gemini client (reuse pattern from summarizer.py)
+# Claude client (reuse pattern from summarizer.py)
 # ---------------------------------------------------------------------------
 
-from google import genai
+import anthropic
 from app.config import settings
 
-_client = None
+_claude_client: anthropic.AsyncAnthropic | None = None
 
 
-def _get_client() -> genai.Client:
-    global _client
-    if _client is None:
-        _client = genai.Client(api_key=settings.gemini_api_key)
-    return _client
+def _get_claude_client() -> anthropic.AsyncAnthropic:
+    global _claude_client
+    if _claude_client is None:
+        _claude_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    return _claude_client
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +287,7 @@ async def find_similar_entities(
     - 최대 5개까지 추천
     """
     try:
-        client = _get_client()
+        claude = _get_claude_client()
 
         context = ""
         if all_results:
@@ -300,12 +300,15 @@ async def find_similar_entities(
 
         prompt = _SIMILAR_ENTITIES_PROMPT.format(query=query) + f"\n\n[검색 결과]\n{context}"
 
-        response = await client.aio.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
+        print("[DEBUG] [AI] 유사 엔티티 추출: Claude (claude-sonnet-4-20250514)")
+        response = await claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=256,
+            system="반드시 JSON만 출력하세요. 다른 텍스트 없이 JSON만 출력하세요.",
+            messages=[{"role": "user", "content": prompt}],
         )
 
-        raw = response.text.strip()
+        raw = response.content[0].text.strip()
         # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
